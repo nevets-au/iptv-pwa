@@ -1,0 +1,42 @@
+name: Build cleaned playlist
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download playlist
+        run: |
+          curl -L "PUT_YOUR_SOURCE_M3U_URL_HERE" -o raw.m3u
+
+      - name: Clean playlist (keep only working HLS)
+        run: |
+          echo "#EXTM3U" > playlist/index.m3u
+          mkdir -p playlist
+
+          awk '
+          BEGIN { RS="#EXTINF"; FS="\n" }
+          NR>1 {
+            info=$1
+            url=$2
+
+            if (url ~ /\.m3u8($|\?)/) {
+              print "#EXTINF" info >> "playlist/index.m3u"
+              print url >> "playlist/index.m3u"
+            }
+          }' raw.m3u
+
+      - name: Commit cleaned playlist
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add playlist/index.m3u
+          git commit -m "Update cleaned playlist" || echo "No changes"
+          git push

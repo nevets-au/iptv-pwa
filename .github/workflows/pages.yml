@@ -1,18 +1,31 @@
-name: Build cleaned playlist
-
-permissions:
-  contents: write
+name: Build and deploy IPTV playlist
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 */6 * * *"
+  push:
+    branches: [main]
+
+# Required permissions for GitHub Pages deployment
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only allow one deployment at a time
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    # Hard cap — playlist build should never need more than 30 min
     timeout-minutes: 30
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Checkout repo
@@ -27,26 +40,18 @@ jobs:
             -o raw.m3u
           echo "Downloaded $(wc -l < raw.m3u) lines"
 
-      # ── Fast approach: skip stream verification entirely ──
-      # The iptv-org project already validates streams daily.
-      # Trying to re-verify 10k+ streams from a GH Actions runner is
-      # what caused the previous workflow to time out and produce an
-      # empty playlist. We just filter by URL pattern instead.
-      - name: Build filtered playlist (no per-stream curl)
+      - name: Build filtered playlist
         run: |
           set -euo pipefail
           mkdir -p playlist
 
           echo "#EXTM3U" > playlist/index.m3u
 
-          # Parse EXTINF + URL pairs; keep only clear HLS/m3u8 URLs
           awk '
             /^#EXTINF/ {
               info = $0
               getline url
-              # Trim whitespace
               gsub(/^[ \t]+|[ \t]+$/, "", url)
-              # Accept http/https URLs that look like HLS streams
               if (url ~ /^https?:\/\// &&
                   (url ~ /\.m3u8([?#]|$)/ ||
                    url ~ /\.m3u([?#]|$)/  ||
@@ -62,31 +67,22 @@ jobs:
 
           TOTAL=$(grep -c '^#EXTINF' playlist/index.m3u || true)
           echo "Kept $TOTAL channels"
-          echo "--- first 10 channels ---"
-          grep -A1 '^#EXTINF' playlist/index.m3u | head -20 || true
 
-          # Fail loudly if we ended up with nothing (bad download etc.)
           if [ "$TOTAL" -lt 10 ]; then
-            echo "ERROR: Fewer than 10 channels found — something went wrong with the download or filter"
+            echo "ERROR: Fewer than 10 channels — download or filter failed"
             exit 1
           fi
 
-      - name: Commit and push cleaned playlist
-        run: |
-          set -euo pipefail
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
 
-          git add playlist/index.m3u
+      - name: Upload site as Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Upload the entire repo folder (index.html, manifest.json,
+          # service-worker.js) PLUS the freshly built playlist/index.m3u
+          path: "."
 
-          # Only commit if something actually changed
-          if git diff --cached --quiet; then
-            echo "No changes to commit — playlist unchanged"
-            exit 0
-          fi
-
-          TOTAL=$(grep -c '^#EXTINF' playlist/index.m3u || echo "?")
-          git commit -m "chore: update playlist ($TOTAL channels) [skip ci]"
-
-          # Push using the default GITHUB_TOKEN
-          git push origin HEAD:${{ github.ref_name }}
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

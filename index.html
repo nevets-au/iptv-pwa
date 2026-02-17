@@ -33,7 +33,7 @@
 /* EDIT THIS to point to your cleaned m3u on GitHub Pages once published:
    Example: https://YOUR_USERNAME.github.io/YOUR_REPO/playlist/index.m3u
 */
-const CLEANED_PLAYLIST_URL = "https://YOUR_USERNAME.github.io/YOUR_REPO/playlist/index.m3u";
+const CLEANED_PLAYLIST_URL = "/playlist/index.m3u";
 
 async function fetchText(url){ const r=await fetch(url); if(!r.ok) throw new Error(r.statusText); return r.text(); }
 

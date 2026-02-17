@@ -4,7 +4,7 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <link rel="manifest" href="/manifest.json">
-  <title>IPTV PWA (Cleaned)</title>
+  <title>IPTV PWA (Cleaned)r1</title>
   <style>
     body{font-family: -apple-system, system-ui, Roboto, Arial; margin:0; padding:0; display:flex; flex-direction:column; height:100vh;}
     header{padding:12px; background:#111; color:#fff;}
@@ -30,9 +30,7 @@
   </main>
 
 <script>
-/* EDIT THIS to point to your cleaned m3u on GitHub Pages once published:
-   Example: https://YOUR_USERNAME.github.io/YOUR_REPO/playlist/index.m3u
-*/
+/* LOCAL playlist path on the same Pages site (no CORS problems) */
 const CLEANED_PLAYLIST_URL = "/playlist/index.m3u";
 
 async function fetchText(url){ const r=await fetch(url); if(!r.ok) throw new Error(r.statusText); return r.text(); }

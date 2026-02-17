@@ -18,6 +18,8 @@
     .logo{height:28px; width:28px; object-fit:contain; margin-right:8px; vertical-align:middle}
   </style>
 </head>
+<!-- Add in <head> or before the closing </body> -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.0/dist/hls.min.js"></script>
 <body>
   <header><strong>IPTV PWA</strong> — Tap channel, then use AirPlay from Safari</header>
   <main>
@@ -65,9 +67,28 @@ function renderChannels(channels){
 
 function playChannel(c){
   const player = document.getElementById('player');
+  // If browser supports native HLS (Safari), use src directly
+  if(player.canPlayType('application/vnd.apple.mpegurl')) {
+    player.src = c.url;
+    player.play().catch(e=>console.warn("Play failed:",e));
+    return;
+  }
+  // Otherwise use hls.js
+  if (window.Hls && Hls.isSupported()) {
+    if (window._hls) { window._hls.destroy(); window._hls = null; }
+    const hls = new Hls();
+    window._hls = hls;
+    hls.loadSource(c.url);
+    hls.attachMedia(player);
+    hls.on(Hls.Events.MANIFEST_PARSED, function() { player.play().catch(e=>console.warn(e)); });
+    hls.on(Hls.Events.ERROR, function(event, data) {
+      console.warn("HLS error", data);
+    });
+    return;
+  }
+  // Fallback: attempt direct assign
   player.src = c.url;
   player.play().catch(e=>console.warn("Play failed:",e));
-  document.getElementById('epg').innerHTML = `<h3 style="margin:8px 0">${c.name}</h3><div>tvg-id: ${c.tvgId}</div>`;
 }
 
 document.getElementById('airplayBtn').addEventListener('click', ()=>{

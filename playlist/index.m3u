@@ -1,15 +1,15 @@
 #EXTM3U
-#EXTINF:-1 tvg-id="bbcnews.uk",BBC News
-https://vs-cmaf-pushb-ww-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_news24/pc_hd_abr_v2.m3u8
+#EXTINF:-1 tvg-id="mux-test",Mux Test
+https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
 
-#EXTINF:-1 tvg-id="skynews.uk",Sky News
+#EXTINF:-1 tvg-id="skynews.uk",Sky News (should play)
 https://skynewsau-live.akamaized.net/hls/live/2002689/skynewsau-extra1/master.m3u8
 
-#EXTINF:-1 tvg-id="abc.au",ABC News AU
-https://abcnews-live.akamaized.net/hls/live/2032212/abcnewsau/master.m3u8
+#EXTINF:-1 tvg-id="jwplayer-oceans",Oceans (JW Player test)
+https://playertest.longtailvideo.com/adaptive/oceans_aes/oceans_aes.m3u8
 
-#EXTINF:-1 tvg-id="nasa.us",NASA TV
-https://ntv1.ntvcdn.com/NASA-NTV1/master.m3u8
+#EXTINF:-1 tvg-id="cph-test",CPH Test Stream
+https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8
 
-#EXTINF:-1 tvg-id="pbs.us",PBS
-https://dai.google.com/linear/hls/event/0x1ZkqPpQam6rJgHAvq1sQ/master.m3u8
+#EXTINF:-1 tvg-id="bento-sintel",Sintel (alternate host)
+https://d2zihajmogu5jn.cloudfront.net/elephantsdream/playlist.m3u8

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <link rel="manifest" href="/manifest.json">
+  <title>IPTV PWA (Cleaned)</title>
+  <style>
+    body{font-family: -apple-system, system-ui, Roboto, Arial; margin:0; padding:0; display:flex; flex-direction:column; height:100vh;}
+    header{padding:12px; background:#111; color:#fff;}
+    main{display:flex; gap:12px; padding:12px; flex:1; overflow:hidden}
+    #channels{width:320px; overflow:auto; border-right:1px solid #ddd; padding-right:8px;}
+    .chan{padding:8px; border-bottom:1px solid #eee; cursor:pointer;}
+    .chan:hover{background:#f3f3f3}
+    #playerWrap{flex:1; display:flex; flex-direction:column;}
+    video{width:100%; height:60vh; background:#000;}
+    #epg{flex:1; overflow:auto; margin-top:8px}
+    .logo{height:28px; width:28px; object-fit:contain; margin-right:8px; vertical-align:middle}
+  </style>
+</head>
+<body>
+  <header><strong>IPTV PWA</strong> — Tap channel, then use AirPlay from Safari</header>
+  <main>
+    <section id="channels"><em>Loading channels…</em></section>
+    <section id="playerWrap">
+      <video id="player" controls playsinline webkit-playsinline x-webkit-airplay="allow"></video>
+      <div style="padding:8px"> <button id="airplayBtn">Show AirPlay Targets</button> </div>
+      <div id="epg"></div>
+    </section>
+  </main>
+
+<script>
+/* EDIT THIS to point to your cleaned m3u on GitHub Pages once published:
+   Example: https://YOUR_USERNAME.github.io/YOUR_REPO/playlist/index.m3u
+*/
+const CLEANED_PLAYLIST_URL = "https://YOUR_USERNAME.github.io/YOUR_REPO/playlist/index.m3u";
+
+async function fetchText(url){ const r=await fetch(url); if(!r.ok) throw new Error(r.statusText); return r.text(); }
+
+function parseM3U(text){
+  const lines = text.split(/\r?\n/);
+  const channels = [];
+  for(let i=0;i<lines.length;i++){
+    const l = lines[i].trim();
+    if(!l) continue;
+    if(l.startsWith("#EXTINF")){
+      const meta = l;
+      const name = meta.split(",").slice(1).join(",").trim();
+      const tvgLogo = (meta.match(/tvg-logo="([^"]+)"/) || [null,null])[1] || "";
+      const tvgId = (meta.match(/tvg-id="([^"]+)"/) || [null,null])[1] || "";
+      const url = (lines[i+1]||"").trim();
+      channels.push({name, tvgLogo, tvgId, url});
+    }
+  }
+  return channels;
+}
+
+function renderChannels(channels){
+  const el = document.getElementById('channels'); el.innerHTML = "";
+  channels.forEach((c)=>{
+    const div=document.createElement('div'); div.className='chan';
+    div.innerHTML = `<img class="logo" src="${c.tvgLogo||''}" onerror="this.style.display='none'">${c.name} <div style="font-size:12px;color:#666">${c.tvgId||''}</div>`;
+    div.onclick = ()=>playChannel(c);
+    el.appendChild(div);
+  });
+}
+
+function playChannel(c){
+  const player = document.getElementById('player');
+  player.src = c.url;
+  player.play().catch(e=>console.warn("Play failed:",e));
+  document.getElementById('epg').innerHTML = `<h3 style="margin:8px 0">${c.name}</h3><div>tvg-id: ${c.tvgId}</div>`;
+}
+
+document.getElementById('airplayBtn').addEventListener('click', ()=>{
+  const player = document.getElementById('player');
+  if(player.webkitShowPlaybackTargetPicker) try{ player.webkitShowPlaybackTargetPicker(); } catch(e){ alert('AirPlay picker not available: ' + e.message); }
+  else alert('AirPlay picker not supported in this browser — use native control center.');
+});
+
+async function init(){
+  try{
+    const m3u = await fetchText(CLEANED_PLAYLIST_URL);
+    const list = parseM3U(m3u);
+    renderChannels(list);
+  }catch(err){
+    document.getElementById('channels').innerText = "Failed to load playlist. CORS or network error: " + err.message;
+  }
+}
+
+// Optional: register service worker for installability
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/service-worker.js').catch(e=>console.warn(e));
+}
+
+init();
+</script>
+</body>
+</html>

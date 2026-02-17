@@ -1,0 +1,9 @@
+{
+  "name": "iptv-filter",
+  "version": "1.0.0",
+  "scripts": { "filter": "node filter_m3u.js" },
+  "dependencies": {
+    "node-fetch": "^2.6.7",
+    "m3u8-parser": "^4.5.0"
+  }
+}

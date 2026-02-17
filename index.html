@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <link rel="manifest" href="manifest.json">
   <title>IPTV PWA (Cleaned)</title>
+  <!-- hls.js moved inside <head> where it belongs -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.0/dist/hls.min.js"></script>
   <style>
     body{font-family: -apple-system, system-ui, Roboto, Arial; margin:0; padding:0; display:flex; flex-direction:column; height:100vh;}
     header{padding:12px; background:#111; color:#fff;}
@@ -18,8 +20,6 @@
     .logo{height:28px; width:28px; object-fit:contain; margin-right:8px; vertical-align:middle}
   </style>
 </head>
-<!-- Add in <head> or before the closing </body> -->
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.0/dist/hls.min.js"></script>
 <body>
   <header><strong>IPTV PWA</strong> — Tap channel, then use AirPlay from Safari</header>
   <main>
@@ -32,11 +32,10 @@
   </main>
 
 <script>
-/* LOCAL playlist path on the same Pages site (no CORS problems) */
-/* const CLEANED_PLAYLIST_URL = "playlist/index.m3u"; */
-const CLEANED_PLAYLIST_URL = "playlist/index.m3u?nocache=" + Date.now();
+/* Always fetch fresh playlist — service worker is configured to bypass cache for /playlist/ */
+const CLEANED_PLAYLIST_URL = "playlist/index.m3u?v=" + Date.now();
 
-async function fetchText(url){ const r=await fetch(url); if(!r.ok) throw new Error(r.statusText); return r.text(); }
+async function fetchText(url){ const r=await fetch(url, {cache: "no-store"}); if(!r.ok) throw new Error(r.statusText); return r.text(); }
 
 function parseM3U(text){
   const lines = text.split(/\r?\n/);
@@ -58,6 +57,10 @@ function parseM3U(text){
 
 function renderChannels(channels){
   const el = document.getElementById('channels'); el.innerHTML = "";
+  if(channels.length === 0){
+    el.innerHTML = "<em>Playlist is empty — the GitHub Action may not have run yet.</em>";
+    return;
+  }
   channels.forEach((c)=>{
     const div=document.createElement('div'); div.className='chan';
     div.innerHTML = `<img class="logo" src="${c.tvgLogo||''}" onerror="this.style.display='none'">${c.name} <div style="font-size:12px;color:#666">${c.tvgId||''}</div>`;
@@ -104,13 +107,15 @@ async function init(){
     const list = parseM3U(m3u);
     renderChannels(list);
   }catch(err){
-    document.getElementById('channels').innerText = "Failed to load playlist. CORS or network error: " + err.message;
+    document.getElementById('channels').innerText = "Failed to load playlist: " + err.message;
   }
 }
 
-// Optional: register service worker for installability
+// Register service worker and force it to update immediately
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('service-worker.js').catch(e=>console.warn(e));
+  navigator.serviceWorker.register('service-worker.js').then(reg => {
+    reg.update(); // check for a new SW version on every page load
+  }).catch(e=>console.warn(e));
 }
 
 init();

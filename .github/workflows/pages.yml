@@ -1,42 +1,51 @@
 name: Build cleaned playlist
 
+# allow the workflow to push back to the repo
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */6 * * *"   # run every 6 hours
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Download playlist
+      - name: Download master playlist (iptv-org)
         run: |
-          curl -L "PUT_YOUR_SOURCE_M3U_URL_HERE" -o raw.m3u
+          set -e
+          echo "Downloading iptv-org master playlist..."
+          curl -L "https://iptv-org.github.io/iptv/index.m3u" -o raw.m3u
+          echo "Download finished. Size:"
+          wc -c raw.m3u || true
+          head -n 5 raw.m3u || true
 
-      - name: Clean playlist (keep only working HLS)
+      - name: Build cleaned playlist (keep only .m3u8)
         run: |
-          echo "#EXTM3U" > playlist/index.m3u
           mkdir -p playlist
-
+          echo "#EXTM3U" > playlist/index.m3u
           awk '
-          BEGIN { RS="#EXTINF"; FS="\n" }
-          NR>1 {
-            info=$1
-            url=$2
-
+          /^#EXTINF/ {info=$0; getline url;
             if (url ~ /\.m3u8($|\?)/) {
-              print "#EXTINF" info >> "playlist/index.m3u"
-              print url >> "playlist/index.m3u"
+              print info >> "playlist/index.m3u";
+              print url  >> "playlist/index.m3u";
             }
-          }' raw.m3u
+          }' raw.m3u || true
+          echo "Cleaned playlist lines:"
+          wc -l playlist/index.m3u || true
+          echo "--- sample ---"
+          head -n 40 playlist/index.m3u || true
 
       - name: Commit cleaned playlist
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add playlist/index.m3u
-          git commit -m "Update cleaned playlist" || echo "No changes"
-          git push
+          git add playlist/index.m3u || true
+          git commit -m "Update cleaned playlist (automated)" || echo "No changes to commit"
+          git push || echo "Push failed (will show in log)"

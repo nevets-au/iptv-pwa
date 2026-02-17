@@ -1,4 +1,4 @@
-name: Build cleaned playlist (verify streams)
+name: Build cleaned playlist
 
 permissions:
   contents: write
@@ -11,74 +11,82 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Hard cap — playlist build should never need more than 30 min
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Download master playlist
         run: |
-          set -x
-          mkdir -p playlist
+          set -euo pipefail
           echo "Downloading iptv-org master playlist..."
-          curl -L --max-time 30 "https://iptv-org.github.io/iptv/index.m3u" -o raw.m3u || { echo "curl failed"; ls -l raw.m3u || true; }
+          curl -fL --max-time 60 \
+            "https://iptv-org.github.io/iptv/index.m3u" \
+            -o raw.m3u
+          echo "Downloaded $(wc -l < raw.m3u) lines"
 
-      - name: Prepare candidates list
+      # ── Fast approach: skip stream verification entirely ──
+      # The iptv-org project already validates streams daily.
+      # Trying to re-verify 10k+ streams from a GH Actions runner is
+      # what caused the previous workflow to time out and produce an
+      # empty playlist. We just filter by URL pattern instead.
+      - name: Build filtered playlist (no per-stream curl)
         run: |
-          mkdir -p tmp
-          awk '/^#EXTINF/ {info=$0; getline url; print info "|" url}' raw.m3u > tmp/candidates.txt || true
-          echo "Candidates count:" $(wc -l tmp/candidates.txt)
-
-      - name: Verify candidates (small-range GET, sniff for #EXTM3U)
-        run: |
+          set -euo pipefail
           mkdir -p playlist
+
           echo "#EXTM3U" > playlist/index.m3u
-          echo "Verifying each candidate (this may take a few minutes)..."
-          while IFS='|' read -r info url; do
-            # Only test http(s) URLs
-            if [[ ! "$url" =~ ^https?:// ]]; then
-              echo "SKIP (not http/https): $url"
-              continue
-            fi
 
-            # quick heuristic: try to fetch a small byte range (0-8191) to sniff manifest
-            body=$(curl -s --max-time 12 --location --range 0-8191 "$url" || true)
+          # Parse EXTINF + URL pairs; keep only clear HLS/m3u8 URLs
+          awk '
+            /^#EXTINF/ {
+              info = $0
+              getline url
+              # Trim whitespace
+              gsub(/^[ \t]+|[ \t]+$/, "", url)
+              # Accept http/https URLs that look like HLS streams
+              if (url ~ /^https?:\/\// &&
+                  (url ~ /\.m3u8([?#]|$)/ ||
+                   url ~ /\.m3u([?#]|$)/  ||
+                   url ~ /\/hls\//         ||
+                   url ~ /\/live\//        ||
+                   url ~ /\/stream\//      ||
+                   url ~ /\/playlist\//)) {
+                print info
+                print url
+              }
+            }
+          ' raw.m3u >> playlist/index.m3u
 
-            # try to get content-type header too
-            ctype=$(curl -sI --max-time 8 -L "$url" | tr -d '\r' | grep -i '^Content-Type:' | awk '{ $1=""; sub(/^ /,""); print $0 }' | tr -d '\n' || true)
+          TOTAL=$(grep -c '^#EXTINF' playlist/index.m3u || true)
+          echo "Kept $TOTAL channels"
+          echo "--- first 10 channels ---"
+          grep -A1 '^#EXTINF' playlist/index.m3u | head -20 || true
 
-            if echo "$ctype" | grep -qi "mpegurl\|x-mpegurl\|application/vnd.apple.mpegurl"; then
-              echo "KEEP (ctype): $url"
-              echo "$info" >> playlist/index.m3u
-              echo "$url" >> playlist/index.m3u
-              continue
-            fi
+          # Fail loudly if we ended up with nothing (bad download etc.)
+          if [ "$TOTAL" -lt 10 ]; then
+            echo "ERROR: Fewer than 10 channels found — something went wrong with the download or filter"
+            exit 1
+          fi
 
-            if echo "$body" | grep -q '#EXTM3U'; then
-              echo "KEEP (sniff): $url"
-              echo "$info" >> playlist/index.m3u
-              echo "$url" >> playlist/index.m3u
-              continue
-            fi
-
-            # fallback: if URL ends with .m3u8 accept (some servers mislabel)
-            if echo "$url" | grep -qi '\.m3u8($|\?)'; then
-              echo "KEEP (ext): $url"
-              echo "$info" >> playlist/index.m3u
-              echo "$url" >> playlist/index.m3u
-              continue
-            fi
-
-            echo "DROP: $url (no m3u8/manifest)"
-          done < tmp/candidates.txt
-
-          echo "Final cleaned count:" $(wc -l playlist/index.m3u) || true
-          echo "--- sample ---"
-          head -n 40 playlist/index.m3u || true
-
-      - name: Commit cleaned playlist
+      - name: Commit and push cleaned playlist
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add playlist/index.m3u || true
-          git commit -m "Update cleaned playlist (verified by Action)" || echo "No changes to commit"
-          git push || echo "Push failed"
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add playlist/index.m3u
+
+          # Only commit if something actually changed
+          if git diff --cached --quiet; then
+            echo "No changes to commit — playlist unchanged"
+            exit 0
+          fi
+
+          TOTAL=$(grep -c '^#EXTINF' playlist/index.m3u || echo "?")
+          git commit -m "chore: update playlist ($TOTAL channels) [skip ci]"
+
+          # Push using the default GITHUB_TOKEN
+          git push origin HEAD:${{ github.ref_name }}

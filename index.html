@@ -4,118 +4,203 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <link rel="manifest" href="manifest.json">
-  <title>IPTV PWA (Cleaned)</title>
-  <!-- hls.js moved inside <head> where it belongs -->
+  <title>IPTV PWA</title>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.0/dist/hls.min.js"></script>
   <style>
-    body{font-family: -apple-system, system-ui, Roboto, Arial; margin:0; padding:0; display:flex; flex-direction:column; height:100vh;}
-    header{padding:12px; background:#111; color:#fff;}
-    main{display:flex; gap:12px; padding:12px; flex:1; overflow:hidden}
-    #channels{width:320px; overflow:auto; border-right:1px solid #ddd; padding-right:8px;}
-    .chan{padding:8px; border-bottom:1px solid #eee; cursor:pointer;}
-    .chan:hover{background:#f3f3f3}
-    #playerWrap{flex:1; display:flex; flex-direction:column;}
-    video{width:100%; height:60vh; background:#000;}
-    #epg{flex:1; overflow:auto; margin-top:8px}
-    .logo{height:28px; width:28px; object-fit:contain; margin-right:8px; vertical-align:middle}
+    *{box-sizing:border-box}
+    body{font-family:-apple-system,system-ui,Roboto,Arial;margin:0;padding:0;display:flex;flex-direction:column;height:100vh;background:#0a0a0a;color:#f0f0f0}
+    header{padding:12px 16px;background:#111;border-bottom:1px solid #222;display:flex;align-items:center;gap:12px}
+    header strong{font-size:16px}
+    #airplayBtn{
+      /* Must be directly on the video or a sibling — styled as a pill button */
+      margin-left:auto;
+      background:#1c1c1e;
+      color:#fff;
+      border:1px solid #444;
+      border-radius:20px;
+      padding:6px 14px;
+      font-size:14px;
+      cursor:pointer;
+      /* IMPORTANT: needs -webkit-airplay on the element, not display:none */
+    }
+    #airplayBtn:active{background:#333}
+    main{display:flex;gap:0;flex:1;overflow:hidden}
+    #channels{width:300px;overflow:auto;border-right:1px solid #222;background:#111}
+    .chan{padding:10px 12px;border-bottom:1px solid #1a1a1a;cursor:pointer;display:flex;align-items:center;gap:8px}
+    .chan:hover,.chan.active{background:#1c1c1e}
+    .chan.active{border-left:3px solid #0a84ff}
+    .chan-name{font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .chan-id{font-size:11px;color:#888;margin-top:2px}
+    .logo{height:28px;width:28px;object-fit:contain;flex-shrink:0;border-radius:4px}
+    #playerWrap{flex:1;display:flex;flex-direction:column;background:#000}
+    #player{width:100%;height:60vh;background:#000;display:block}
+    #nowPlaying{padding:10px 14px;font-size:13px;color:#aaa;background:#111;border-bottom:1px solid #222;min-height:36px}
+    #airplayStatus{display:inline-block;margin-left:8px;font-size:12px;color:#0a84ff}
   </style>
 </head>
 <body>
-  <header><strong>IPTV PWA</strong> — Tap channel, then use AirPlay from Safari</header>
+  <header>
+    <strong>📺 IPTV PWA</strong>
+    <!--
+      The AirPlay button MUST be in the same user-gesture call stack as
+      webkitShowPlaybackTargetPicker(). We wire it up in JS below.
+    -->
+    <button id="airplayBtn" title="AirPlay">⎋ AirPlay</button>
+  </header>
   <main>
-    <section id="channels"><em>Loading channels…</em></section>
+    <section id="channels"><em style="padding:12px;display:block;color:#666">Loading…</em></section>
     <section id="playerWrap">
-      <video id="player" controls playsinline webkit-playsinline x-webkit-airplay="allow"></video>
-      <div style="padding:8px"> <button id="airplayBtn">Show AirPlay Targets</button> </div>
-      <div id="epg"></div>
+      <!--
+        Key AirPlay attributes:
+        - x-webkit-airplay="allow"  → tells Safari this element can AirPlay
+        - webkit-playsinline        → keeps Safari from going fullscreen on iOS
+        - playsinline               → standard attribute
+        DO NOT set mediagroup — it can break AirPlay target selection
+      -->
+      <video id="player"
+             controls
+             playsinline
+             webkit-playsinline
+             x-webkit-airplay="allow">
+      </video>
+      <div id="nowPlaying">No channel selected<span id="airplayStatus"></span></div>
     </section>
   </main>
 
 <script>
-/* Always fetch fresh playlist — service worker is configured to bypass cache for /playlist/ */
-const CLEANED_PLAYLIST_URL = "playlist/index.m3u?v=" + Date.now();
+const PLAYLIST_URL = "playlist/index.m3u?v=" + Date.now();
+let currentChannel = null;
 
-async function fetchText(url){ const r=await fetch(url, {cache: "no-store"}); if(!r.ok) throw new Error(r.statusText); return r.text(); }
+/* ── Playlist fetch + parse ── */
+async function fetchText(url){
+  const r = await fetch(url, {cache:"no-store"});
+  if(!r.ok) throw new Error(r.statusText);
+  return r.text();
+}
 
 function parseM3U(text){
   const lines = text.split(/\r?\n/);
   const channels = [];
-  for(let i=0;i<lines.length;i++){
+  for(let i = 0; i < lines.length; i++){
     const l = lines[i].trim();
-    if(!l) continue;
-    if(l.startsWith("#EXTINF")){
-      const meta = l;
-      const name = meta.split(",").slice(1).join(",").trim();
-      const tvgLogo = (meta.match(/tvg-logo="([^"]+)"/) || [null,null])[1] || "";
-      const tvgId = (meta.match(/tvg-id="([^"]+)"/) || [null,null])[1] || "";
-      const url = (lines[i+1]||"").trim();
-      channels.push({name, tvgLogo, tvgId, url});
-    }
+    if(!l.startsWith("#EXTINF")) continue;
+    const name    = l.split(",").slice(1).join(",").trim();
+    const tvgLogo = (l.match(/tvg-logo="([^"]+)"/)  || [,null])[1] || "";
+    const tvgId   = (l.match(/tvg-id="([^"]+)"/)    || [,null])[1] || "";
+    const url     = (lines[i+1]||"").trim();
+    if(url) channels.push({name, tvgLogo, tvgId, url});
   }
   return channels;
 }
 
+/* ── Channel list render ── */
 function renderChannels(channels){
-  const el = document.getElementById('channels'); el.innerHTML = "";
-  if(channels.length === 0){
-    el.innerHTML = "<em>Playlist is empty — the GitHub Action may not have run yet.</em>";
+  const el = document.getElementById('channels');
+  el.innerHTML = "";
+  if(!channels.length){
+    el.innerHTML = "<em style='padding:12px;display:block;color:#888'>Playlist empty — run the GitHub Action.</em>";
     return;
   }
-  channels.forEach((c)=>{
-    const div=document.createElement('div'); div.className='chan';
-    div.innerHTML = `<img class="logo" src="${c.tvgLogo||''}" onerror="this.style.display='none'">${c.name} <div style="font-size:12px;color:#666">${c.tvgId||''}</div>`;
-    div.onclick = ()=>playChannel(c);
+  channels.forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'chan';
+    div.innerHTML =
+      `<img class="logo" src="${c.tvgLogo||''}" onerror="this.style.visibility='hidden'">
+       <div><div class="chan-name">${c.name}</div><div class="chan-id">${c.tvgId||''}</div></div>`;
+    div.addEventListener('click', () => playChannel(c, div));
     el.appendChild(div);
   });
 }
 
-function playChannel(c){
+/* ── Playback ── */
+function playChannel(c, divEl){
+  // Highlight active
+  document.querySelectorAll('.chan.active').forEach(d => d.classList.remove('active'));
+  if(divEl) divEl.classList.add('active');
+
+  currentChannel = c;
+  document.getElementById('nowPlaying').innerHTML =
+    `▶ ${c.name}<span id="airplayStatus"></span>`;
+
   const player = document.getElementById('player');
-  // If browser supports native HLS (Safari), use src directly
-  if(player.canPlayType('application/vnd.apple.mpegurl')) {
+
+  // Safari on iOS/macOS: native HLS — just set src, AirPlay works natively
+  if(player.canPlayType('application/vnd.apple.mpegurl')){
     player.src = c.url;
-    player.play().catch(e=>console.warn("Play failed:",e));
+    player.load();
+    player.play().catch(e => console.warn("Play failed:", e));
     return;
   }
-  // Otherwise use hls.js
-  if (window.Hls && Hls.isSupported()) {
-    if (window._hls) { window._hls.destroy(); window._hls = null; }
-    const hls = new Hls();
+
+  // Chrome/Firefox/Edge: use hls.js
+  if(window.Hls && Hls.isSupported()){
+    if(window._hls){ window._hls.destroy(); window._hls = null; }
+    const hls = new Hls({enableWorker:true});
     window._hls = hls;
     hls.loadSource(c.url);
     hls.attachMedia(player);
-    hls.on(Hls.Events.MANIFEST_PARSED, function() { player.play().catch(e=>console.warn(e)); });
-    hls.on(Hls.Events.ERROR, function(event, data) {
-      console.warn("HLS error", data);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => player.play().catch(e => console.warn(e)));
+    hls.on(Hls.Events.ERROR, (_, data) => {
+      if(data.fatal) console.warn("HLS fatal error:", data);
     });
     return;
   }
-  // Fallback: attempt direct assign
+
   player.src = c.url;
-  player.play().catch(e=>console.warn("Play failed:",e));
+  player.play().catch(e => console.warn("Play failed:", e));
 }
 
-document.getElementById('airplayBtn').addEventListener('click', ()=>{
+/* ── AirPlay ──
+   Safari requires webkitShowPlaybackTargetPicker() to be called
+   SYNCHRONOUSLY inside a user gesture handler (touchend / click).
+   Calling it after any await or setTimeout breaks it.
+   The button click here is a direct synchronous call — no async gap.
+*/
+document.getElementById('airplayBtn').addEventListener('click', function(){
   const player = document.getElementById('player');
-  if(player.webkitShowPlaybackTargetPicker) try{ player.webkitShowPlaybackTargetPicker(); } catch(e){ alert('AirPlay picker not available: ' + e.message); }
-  else alert('AirPlay picker not supported in this browser — use native control center.');
+  if(!player.src && !player.currentSrc){
+    alert("Select a channel first, then tap AirPlay.");
+    return;
+  }
+  if(typeof player.webkitShowPlaybackTargetPicker === 'function'){
+    player.webkitShowPlaybackTargetPicker();
+  } else {
+    alert("AirPlay is only available in Safari. Use the AirPlay icon in Safari's video controls instead.");
+  }
 });
 
+/* ── AirPlay status events ── */
+const player = document.getElementById('player');
+
+player.addEventListener('webkitplaybacktargetavailabilitychanged', function(e){
+  const btn = document.getElementById('airplayBtn');
+  btn.style.display = (e.availability === 'available') ? 'block' : 'none';
+});
+
+player.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', function(){
+  const status = document.getElementById('airplayStatus');
+  if(player.webkitCurrentPlaybackTargetIsWireless){
+    status.textContent = " · 📡 AirPlaying";
+  } else {
+    status.textContent = "";
+  }
+});
+
+/* ── Init ── */
 async function init(){
   try{
-    const m3u = await fetchText(CLEANED_PLAYLIST_URL);
-    const list = parseM3U(m3u);
-    renderChannels(list);
-  }catch(err){
-    document.getElementById('channels').innerText = "Failed to load playlist: " + err.message;
+    const m3u = await fetchText(PLAYLIST_URL);
+    renderChannels(parseM3U(m3u));
+  } catch(err){
+    document.getElementById('channels').innerHTML =
+      `<em style='padding:12px;display:block;color:#f66'>Failed to load playlist: ${err.message}</em>`;
   }
 }
 
-// Register service worker and force it to update immediately
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('service-worker.js').then(reg => {
-    reg.update(); // check for a new SW version on every page load
-  }).catch(e=>console.warn(e));
+  navigator.serviceWorker.register('service-worker.js')
+    .then(reg => reg.update())
+    .catch(e => console.warn(e));
 }
 
 init();

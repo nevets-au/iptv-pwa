@@ -1,44 +1,77 @@
-name: Build cleaned playlist
+name: Build cleaned playlist (verify streams)
 
-# allow the workflow to push back to the repo
 permissions:
   contents: write
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"   # run every 6 hours
+    - cron: "0 */6 * * *"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Download master playlist (iptv-org)
+      - name: Download master playlist
         run: |
-          set -e
+          set -x
+          mkdir -p playlist
           echo "Downloading iptv-org master playlist..."
-          curl -L "https://iptv-org.github.io/iptv/index.m3u" -o raw.m3u
-          echo "Download finished. Size:"
-          wc -c raw.m3u || true
-          head -n 5 raw.m3u || true
+          curl -L --max-time 30 "https://iptv-org.github.io/iptv/index.m3u" -o raw.m3u || { echo "curl failed"; ls -l raw.m3u || true; }
 
-      - name: Build cleaned playlist (keep only .m3u8)
+      - name: Prepare candidates list
+        run: |
+          mkdir -p tmp
+          awk '/^#EXTINF/ {info=$0; getline url; print info "|" url}' raw.m3u > tmp/candidates.txt || true
+          echo "Candidates count:" $(wc -l tmp/candidates.txt)
+
+      - name: Verify candidates (small-range GET, sniff for #EXTM3U)
         run: |
           mkdir -p playlist
           echo "#EXTM3U" > playlist/index.m3u
-          awk '
-          /^#EXTINF/ {info=$0; getline url;
-            if (url ~ /\.m3u8($|\?)/) {
-              print info >> "playlist/index.m3u";
-              print url  >> "playlist/index.m3u";
-            }
-          }' raw.m3u || true
-          echo "Cleaned playlist lines:"
-          wc -l playlist/index.m3u || true
+          echo "Verifying each candidate (this may take a few minutes)..."
+          while IFS='|' read -r info url; do
+            # Only test http(s) URLs
+            if [[ ! "$url" =~ ^https?:// ]]; then
+              echo "SKIP (not http/https): $url"
+              continue
+            fi
+
+            # quick heuristic: try to fetch a small byte range (0-8191) to sniff manifest
+            body=$(curl -s --max-time 12 --location --range 0-8191 "$url" || true)
+
+            # try to get content-type header too
+            ctype=$(curl -sI --max-time 8 -L "$url" | tr -d '\r' | grep -i '^Content-Type:' | awk '{ $1=""; sub(/^ /,""); print $0 }' | tr -d '\n' || true)
+
+            if echo "$ctype" | grep -qi "mpegurl\|x-mpegurl\|application/vnd.apple.mpegurl"; then
+              echo "KEEP (ctype): $url"
+              echo "$info" >> playlist/index.m3u
+              echo "$url" >> playlist/index.m3u
+              continue
+            fi
+
+            if echo "$body" | grep -q '#EXTM3U'; then
+              echo "KEEP (sniff): $url"
+              echo "$info" >> playlist/index.m3u
+              echo "$url" >> playlist/index.m3u
+              continue
+            fi
+
+            # fallback: if URL ends with .m3u8 accept (some servers mislabel)
+            if echo "$url" | grep -qi '\.m3u8($|\?)'; then
+              echo "KEEP (ext): $url"
+              echo "$info" >> playlist/index.m3u
+              echo "$url" >> playlist/index.m3u
+              continue
+            fi
+
+            echo "DROP: $url (no m3u8/manifest)"
+          done < tmp/candidates.txt
+
+          echo "Final cleaned count:" $(wc -l playlist/index.m3u) || true
           echo "--- sample ---"
           head -n 40 playlist/index.m3u || true
 
@@ -47,5 +80,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add playlist/index.m3u || true
-          git commit -m "Update cleaned playlist (automated)" || echo "No changes to commit"
-          git push || echo "Push failed (will show in log)"
+          git commit -m "Update cleaned playlist (verified by Action)" || echo "No changes to commit"
+          git push || echo "Push failed"

@@ -9,10 +9,31 @@
   <style>
     *{box-sizing:border-box}
     body{font-family:-apple-system,system-ui,Roboto,Arial;margin:0;padding:0;display:flex;flex-direction:column;height:100vh;background:#0a0a0a;color:#f0f0f0}
-    header{padding:12px 16px;background:#111;border-bottom:1px solid #222;display:flex;align-items:center;gap:12px}
-    header strong{font-size:16px}
+    header{padding:12px 16px;background:#111;border-bottom:1px solid #222;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    header strong{font-size:16px;flex-shrink:0}
+    #filters{display:flex;gap:8px;flex:1;min-width:300px}
+    #categoryFilter{
+      background:#1c1c1e;
+      color:#fff;
+      border:1px solid #444;
+      border-radius:6px;
+      padding:6px 10px;
+      font-size:14px;
+      cursor:pointer;
+      min-width:140px;
+    }
+    #searchBox{
+      flex:1;
+      background:#1c1c1e;
+      color:#fff;
+      border:1px solid #444;
+      border-radius:6px;
+      padding:6px 10px;
+      font-size:14px;
+      min-width:200px;
+    }
+    #searchBox::placeholder{color:#666}
     #airplayBtn{
-      /* Must be directly on the video or a sibling — styled as a pill button */
       margin-left:auto;
       background:#1c1c1e;
       color:#fff;
@@ -21,9 +42,10 @@
       padding:6px 14px;
       font-size:14px;
       cursor:pointer;
-      /* IMPORTANT: needs -webkit-airplay on the element, not display:none */
+      flex-shrink:0;
     }
     #airplayBtn:active{background:#333}
+    #channelCount{font-size:12px;color:#666;padding:0 4px}
     main{display:flex;gap:0;flex:1;overflow:hidden}
     #channels{width:300px;overflow:auto;border-right:1px solid #222;background:#111}
     .chan{padding:10px 12px;border-bottom:1px solid #1a1a1a;cursor:pointer;display:flex;align-items:center;gap:8px}
@@ -40,23 +62,19 @@
 </head>
 <body>
   <header>
-    <strong>📺 IPTV PWA</strong>
-    <!--
-      The AirPlay button MUST be in the same user-gesture call stack as
-      webkitShowPlaybackTargetPicker(). We wire it up in JS below.
-    -->
+    <strong>📺 IPTV</strong>
+    <div id="filters">
+      <select id="categoryFilter">
+        <option value="">All Categories</option>
+      </select>
+      <input type="text" id="searchBox" placeholder="Search channels...">
+    </div>
+    <span id="channelCount"></span>
     <button id="airplayBtn" title="AirPlay">⎋ AirPlay</button>
   </header>
   <main>
     <section id="channels"><em style="padding:12px;display:block;color:#666">Loading…</em></section>
     <section id="playerWrap">
-      <!--
-        Key AirPlay attributes:
-        - x-webkit-airplay="allow"  → tells Safari this element can AirPlay
-        - webkit-playsinline        → keeps Safari from going fullscreen on iOS
-        - playsinline               → standard attribute
-        DO NOT set mediagroup — it can break AirPlay target selection
-      -->
       <video id="player"
              controls
              playsinline
@@ -69,6 +87,7 @@
 
 <script>
 const PLAYLIST_URL = "playlist/index.m3u?v=" + Date.now();
+let allChannels = [];
 let currentChannel = null;
 
 /* ── Playlist fetch + parse ── */
@@ -84,23 +103,70 @@ function parseM3U(text){
   for(let i = 0; i < lines.length; i++){
     const l = lines[i].trim();
     if(!l.startsWith("#EXTINF")) continue;
-    const name    = l.split(",").slice(1).join(",").trim();
-    const tvgLogo = (l.match(/tvg-logo="([^"]+)"/)  || [,null])[1] || "";
-    const tvgId   = (l.match(/tvg-id="([^"]+)"/)    || [,null])[1] || "";
-    const url     = (lines[i+1]||"").trim();
-    if(url) channels.push({name, tvgLogo, tvgId, url});
+    const name      = l.split(",").slice(1).join(",").trim();
+    const tvgLogo   = (l.match(/tvg-logo="([^"]+)"/)   || [,null])[1] || "";
+    const tvgId     = (l.match(/tvg-id="([^"]+)"/)     || [,null])[1] || "";
+    const groupTitle = (l.match(/group-title="([^"]+)"/) || [,null])[1] || "Other";
+    const url       = (lines[i+1]||"").trim();
+    if(url) channels.push({name, tvgLogo, tvgId, groupTitle, url});
   }
   return channels;
+}
+
+/* ── Build category dropdown ── */
+function populateCategories(channels){
+  const categories = [...new Set(channels.map(c => c.groupTitle))].sort();
+  const select = document.getElementById('categoryFilter');
+  
+  // Clear existing options except "All Categories"
+  select.innerHTML = '<option value="">All Categories</option>';
+  
+  categories.forEach(cat => {
+    const opt = document.createElement('option');
+    opt.value = cat;
+    opt.textContent = cat;
+    // Pre-select "Movies" if it exists
+    if(cat.toLowerCase() === 'movies') opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+/* ── Filter channels based on category + search ── */
+function filterChannels(){
+  const category = document.getElementById('categoryFilter').value;
+  const search = document.getElementById('searchBox').value.toLowerCase().trim();
+  
+  let filtered = allChannels;
+  
+  // Filter by category
+  if(category){
+    filtered = filtered.filter(c => c.groupTitle === category);
+  }
+  
+  // Filter by search text
+  if(search){
+    filtered = filtered.filter(c => 
+      c.name.toLowerCase().includes(search) ||
+      (c.tvgId && c.tvgId.toLowerCase().includes(search))
+    );
+  }
+  
+  renderChannels(filtered);
 }
 
 /* ── Channel list render ── */
 function renderChannels(channels){
   const el = document.getElementById('channels');
+  const countEl = document.getElementById('channelCount');
+  
   el.innerHTML = "";
+  countEl.textContent = `${channels.length} channels`;
+  
   if(!channels.length){
-    el.innerHTML = "<em style='padding:12px;display:block;color:#888'>Playlist empty — run the GitHub Action.</em>";
+    el.innerHTML = "<em style='padding:12px;display:block;color:#888'>No channels match your filters.</em>";
     return;
   }
+  
   channels.forEach(c => {
     const div = document.createElement('div');
     div.className = 'chan';
@@ -124,7 +190,7 @@ function playChannel(c, divEl){
 
   const player = document.getElementById('player');
 
-  // Safari on iOS/macOS: native HLS — just set src, AirPlay works natively
+  // Safari on iOS/macOS: native HLS
   if(player.canPlayType('application/vnd.apple.mpegurl')){
     player.src = c.url;
     player.load();
@@ -150,12 +216,7 @@ function playChannel(c, divEl){
   player.play().catch(e => console.warn("Play failed:", e));
 }
 
-/* ── AirPlay ──
-   Safari requires webkitShowPlaybackTargetPicker() to be called
-   SYNCHRONOUSLY inside a user gesture handler (touchend / click).
-   Calling it after any await or setTimeout breaks it.
-   The button click here is a direct synchronous call — no async gap.
-*/
+/* ── AirPlay ── */
 document.getElementById('airplayBtn').addEventListener('click', function(){
   const player = document.getElementById('player');
   if(!player.src && !player.currentSrc){
@@ -186,11 +247,17 @@ player.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', function
   }
 });
 
+/* ── Filter event listeners ── */
+document.getElementById('categoryFilter').addEventListener('change', filterChannels);
+document.getElementById('searchBox').addEventListener('input', filterChannels);
+
 /* ── Init ── */
 async function init(){
   try{
     const m3u = await fetchText(PLAYLIST_URL);
-    renderChannels(parseM3U(m3u));
+    allChannels = parseM3U(m3u);
+    populateCategories(allChannels);
+    filterChannels(); // This will auto-select Movies and render
   } catch(err){
     document.getElementById('channels').innerHTML =
       `<em style='padding:12px;display:block;color:#f66'>Failed to load playlist: ${err.message}</em>`;

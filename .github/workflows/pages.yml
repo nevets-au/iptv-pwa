@@ -31,12 +31,12 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Download master playlist
+      - name: Download English-only playlist
         run: |
           set -euo pipefail
-          echo "Downloading iptv-org master playlist..."
+          echo "Downloading English-only playlist from iptv-org..."
           curl -fL --max-time 60 \
-            "https://iptv-org.github.io/iptv/index.m3u" \
+            "https://iptv-org.github.io/iptv/languages/eng.m3u" \
             -o raw.m3u
           echo "Downloaded $(wc -l < raw.m3u) lines"
 
